@@ -169,7 +169,7 @@ async function main() {
 
   if (onBaseBranch) {
     await exec.exec("git", ["checkout", "-"]);
-    core.debug(`${testCase}: Checked out to changes branch`);
+    core.debug("Checked out to changes branch");
     onBaseBranch = false;
   }
 
