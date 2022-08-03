@@ -39,24 +39,103 @@ async function main() {
   core.debug("### Install Critcmp ###");
   await exec.exec("cargo", ["install", "critcmp"]);
 
-  core.debug("### Benchmark starting ###");
-  await exec.exec(
-    "cargo",
-    benchCmd.concat(["--", "--save-baseline", "changes"]),
-    options
-  );
-  core.debug("Changes benchmarked");
+  core.debug("### Compiling ###");
+  async function getExecutables() {
+    let output = "";
+    await exec.exec("cargo", benchCmd.concat(["--no-run"]), {
+      listeners: {
+        stderr: (data) => {
+          output += data.toString();
+        },
+      },
+    });
+    let executables = new Set();
+    for (const line of output.split("\n")) {
+      const match = /Executable.+(target[\\\/]release[\\\/][^)]+)/.exec(line);
+      if (match) {
+        executables.add(match[1]);
+      }
+    }
+    return executables;
+  }
+  async function listCases(executable) {
+    let output = "";
+    await exec.exec(executable, ["--bench", "--list"], {
+      listeners: {
+        stdout: (data) => {
+          output += data.toString();
+        },
+      },
+    });
+    let cases = new Set();
+    for (const line of output.split("\n")) {
+      const match = /^(.+): bench$/.exec(line);
+      if (match) {
+        cases.add(match[1]);
+      }
+    }
+    return cases;
+  }
+  async function listAllCases(executables) {
+    let object = {};
+    for (const executable of executables) {
+      let cases = await listCases(executable);
+      for (const testCase of cases) {
+        object[testCase] = executable;
+      }
+    }
+    return object;
+  }
+  await exec.exec("cargo", benchCmd.concat(["--no-run"]), options);
+  core.debug("Changes compiled");
+
+  const changesTestCases = await listAllCases(await getExecutables());
+  core.debug("Changes listed");
+
   await exec.exec("git", [
     "checkout",
     core.getInput("branchName") || github.base_ref,
   ]);
   core.debug("Checked out to base branch");
-  await exec.exec(
-    "cargo",
-    benchCmd.concat(["--", "--save-baseline", "base"]),
-    options
-  );
-  core.debug("Base benchmarked");
+
+  await exec.exec("cargo", benchCmd.concat(["--no-run"]), options);
+  core.debug("Base compiled");
+
+  const baseTestCases = await listAllCases(await getExecutables());
+  core.debug("Base listed");
+
+  await exec.exec("git", ["checkout", "-"]);
+  core.debug("Checked out to changes branch");
+
+  core.debug("### Benchmark starting ###");
+  for (const testCase in changesTestCases) {
+    const changesExecutable = changesTestCases[testCase];
+    const baseExecutable = baseTestCases[testCase];
+    if (!baseExecutable) continue;
+
+    await exec.exec(
+      changesExecutable,
+      ["--bench", testCase, "--save-baseline", "changes"],
+      options
+    );
+    core.debug(`${testCase}: Changes benchmarked`);
+
+    await exec.exec("git", [
+      "checkout",
+      core.getInput("branchName") || github.base_ref,
+    ]);
+    core.debug(`${testCase}: Checked out to base branch`);
+
+    await exec.exec(
+      baseExecutable,
+      ["--bench", testCase, "--save-baseline", "base"],
+      options
+    );
+    core.debug(`${testCase}: Base benchmarked`);
+
+    await exec.exec("git", ["checkout", "-"]);
+    core.debug(`${testCase}: Checked out to changes branch`);
+  }
 
   options.listeners = {
     stdout: (data) => {
