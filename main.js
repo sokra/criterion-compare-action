@@ -127,7 +127,7 @@ function convertDurToSeconds(dur, units) {
   return seconds;
 }
 
-const SIGNIFICANT_FACTOR = 1;
+const SIGNIFICANT_FACTOR = 2;
 
 function isSignificant(changesDur, changesErr, baseDur, baseErr) {
   if (changesDur < baseDur) {
