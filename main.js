@@ -245,40 +245,31 @@ function convertDurToSeconds(dur, units) {
 const SIGNIFICANT_FACTOR = 2;
 
 function isSignificant(changesDur, changesErr, baseDur, baseErr) {
-  if (changesDur < baseDur) {
-    return (
-      changesDur + SIGNIFICANT_FACTOR * changesErr <
-      baseDur - SIGNIFICANT_FACTOR * baseErr
-    );
-  } else {
-    return (
-      changesDur - SIGNIFICANT_FACTOR * changesErr >
-      baseDur + SIGNIFICANT_FACTOR * baseErr
-    );
-  }
+  const changesMin = changesDur - SIGNIFICANT_FACTOR * changesErr;
+  const changesMax = changesDur + SIGNIFICANT_FACTOR * changesErr;
+  const baseMin = baseDur - SIGNIFICANT_FACTOR * baseErr;
+  const baseMax = baseDur + SIGNIFICANT_FACTOR * baseErr;
+  const isFaster = changesMax < baseMin;
+  const isSlower = baseMax < changesMin;
+  return isFaster || isSlower;
 }
 
 function diffPercentage(changes, base) {
-  return -(1 - changes / base) * 100;
+  return (changes / base - 1) * 100;
 }
 
 function significantDiffPercentage(changesDur, changesErr, baseDur, baseErr) {
-  if (changesDur < baseDur) {
-    return Math.min(
-      0,
-      diffPercentage(
-        changesDur + SIGNIFICANT_FACTOR * changesErr,
-        baseDur - SIGNIFICANT_FACTOR * baseErr
-      )
-    );
+  const changesMin = changesDur - SIGNIFICANT_FACTOR * changesErr;
+  const changesMax = changesDur + SIGNIFICANT_FACTOR * changesErr;
+  const baseMin = baseDur - SIGNIFICANT_FACTOR * baseErr;
+  const baseMax = baseDur + SIGNIFICANT_FACTOR * baseErr;
+
+  if (changesMax < baseMin) {
+    return diffPercentage(changesMax, baseMin);
+  } else if (baseMax < changesMin) {
+    return diffPercentage(changesMin, baseMax);
   } else {
-    return Math.max(
-      0,
-      diffPercentage(
-        changesDur - SIGNIFICANT_FACTOR * changesErr,
-        baseDur + SIGNIFICANT_FACTOR * baseErr
-      )
-    );
+    return 0;
   }
 }
 
@@ -382,7 +373,7 @@ function convertToMarkdown(results) {
     )
     .join("\n");
 
-  let shortSha = context.sha.slice(0, 7);
+  let shortSha = context.sha ? context.sha.slice(0, 7) : "unknown";
   return `## Benchmark for ${shortSha}
   <details>
     <summary>Click to view benchmark</summary>
