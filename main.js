@@ -127,12 +127,49 @@ function convertDurToSeconds(dur, units) {
   return seconds;
 }
 
+const SIGNIFICANT_FACTOR = 1;
+
 function isSignificant(changesDur, changesErr, baseDur, baseErr) {
   if (changesDur < baseDur) {
-    return changesDur + changesErr < baseDur || baseDur - baseErr > changesDur;
+    return (
+      changesDur + SIGNIFICANT_FACTOR * changesErr <
+      baseDur - SIGNIFICANT_FACTOR * baseErr
+    );
   } else {
-    return changesDur - changesErr > baseDur || baseDur + baseErr < changesDur;
+    return (
+      changesDur - SIGNIFICANT_FACTOR * changesErr >
+      baseDur + SIGNIFICANT_FACTOR * baseErr
+    );
   }
+}
+
+function diffPercentage(changes, base) {
+  return -(1 - changes / base) * 100;
+}
+
+function significantDiffPercentage(changesDur, changesErr, baseDur, baseErr) {
+  if (changesDur < baseDur) {
+    return Math.min(
+      0,
+      diffPercentage(
+        changesDur + SIGNIFICANT_FACTOR * changesErr,
+        baseDur - SIGNIFICANT_FACTOR * baseErr
+      )
+    );
+  } else {
+    return Math.max(
+      0,
+      diffPercentage(
+        changesDur - SIGNIFICANT_FACTOR * changesErr,
+        baseDur + SIGNIFICANT_FACTOR * baseErr
+      )
+    );
+  }
+}
+
+function formatPercentage(value) {
+  if (value == 0) return "";
+  return (value <= 0 ? "" : "+") + value.toFixed(2) + "%";
 }
 
 function convertToMarkdown(results) {
@@ -166,6 +203,7 @@ function convertToMarkdown(results) {
         }
 
         let difference = "N/A";
+        let significantDifference = "N/A";
         if (!baseUndefined && !changesUndefined) {
           changesFactor = Number(changesFactor);
           baseFactor = Number(baseFactor);
@@ -189,11 +227,15 @@ function convertToMarkdown(results) {
             baseUnits
           );
 
-          difference = -(1 - changesDurSecs / baseDurSecs) * 100;
-          difference =
-            (changesDurSecs <= baseDurSecs ? "" : "+") +
-            difference.toFixed(2) +
-            "%";
+          difference = diffPercentage(changesDurSecs, baseDurSecs);
+          significantDifference = significantDiffPercentage(
+            changesDurSecs,
+            changesErrorSecs,
+            baseDurSecs,
+            baseErrorSecs
+          );
+          difference = formatPercentage(difference);
+          significantDifference = formatPercentage(significantDifference);
           if (
             isSignificant(
               changesDurSecs,
@@ -207,8 +249,6 @@ function convertToMarkdown(results) {
             } else if (changesDurSecs > baseDurSecs) {
               baseDuration = `**${baseDuration}**`;
             }
-
-            difference = `**${difference}**`;
           }
         }
 
@@ -222,7 +262,7 @@ function convertToMarkdown(results) {
 
         name = name.replace(/\|/g, "\\|");
 
-        return `| ${name} | ${baseDuration} | ${changesDuration} | ${difference} |`;
+        return `| ${name} | ${baseDuration} | ${changesDuration} | ${difference} | ${significantDifference} |`;
       }
     )
     .join("\n");
@@ -232,8 +272,8 @@ function convertToMarkdown(results) {
   <details>
     <summary>Click to view benchmark</summary>
 
-| Test | Base         | PR               | % |
-|------|--------------|------------------|---|
+| Test | Base         | PR               | % | sigificant % |
+|------|--------------|------------------|---|--------------|
 ${benchResults}
 
   </details>
