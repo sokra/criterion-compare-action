@@ -1,4 +1,6 @@
 const { inspect } = require("util");
+const { basename, join } = require("path");
+const { mkdtemp, copyFile } = require("fs/promises");
 const exec = require("@actions/exec");
 const core = require("@actions/core");
 const github = require("@actions/github");
@@ -86,10 +88,23 @@ async function main() {
     }
     return object;
   }
+  async function moveExecutables(executables) {
+    const newExecutables = new Set();
+    const dir = await mkdtemp("criterion-compare");
+    for (const executable of executables) {
+      const name = basename(executable);
+      const path = join(dir, name);
+      await copyFile(executable, path);
+      newExecutables.add(path);
+    }
+    return newExecutables;
+  }
   await exec.exec("cargo", benchCmd.concat(["--no-run"]), options);
   core.debug("Changes compiled");
 
-  const changesTestCases = await listAllCases(await getExecutables());
+  const changesExecutables = await getExecutables();
+  const movedChangesExecutables = await moveExecutables(changesExecutables);
+  const changesTestCases = await listAllCases(movedChangesExecutables);
   core.debug("Changes listed");
 
   await exec.exec("git", [
@@ -101,40 +116,61 @@ async function main() {
   await exec.exec("cargo", benchCmd.concat(["--no-run"]), options);
   core.debug("Base compiled");
 
-  const baseTestCases = await listAllCases(await getExecutables());
+  const baseExecutables = await getExecutables();
+  const movedBaseExecutables = await moveExecutables(baseExecutables);
+  const baseTestCases = await listAllCases(movedBaseExecutables);
   core.debug("Base listed");
 
   await exec.exec("git", ["checkout", "-"]);
   core.debug("Checked out to changes branch");
 
   core.debug("### Benchmark starting ###");
-  for (const testCase in changesTestCases) {
+  let onBaseBranch = false;
+  for (const testCase of new Set([
+    ...Object.keys(changesTestCases),
+    ...Object.keys(baseTestCases),
+  ])) {
     const changesExecutable = changesTestCases[testCase];
     const baseExecutable = baseTestCases[testCase];
-    if (!baseExecutable) continue;
 
-    await exec.exec(
-      changesExecutable,
-      ["--bench", testCase, "--save-baseline", "changes"],
-      options
-    );
-    core.debug(`${testCase}: Changes benchmarked`);
+    if (changesExecutable) {
+      if (onBaseBranch) {
+        await exec.exec("git", ["checkout", "-"]);
+        core.debug(`${testCase}: Checked out to changes branch`);
+        onBaseBranch = false;
+      }
 
-    await exec.exec("git", [
-      "checkout",
-      core.getInput("branchName") || github.base_ref,
-    ]);
-    core.debug(`${testCase}: Checked out to base branch`);
+      await exec.exec(
+        changesExecutable,
+        ["--bench", testCase, "--save-baseline", "changes"],
+        options
+      );
+      core.debug(`${testCase}: Changes benchmarked`);
+    }
 
-    await exec.exec(
-      baseExecutable,
-      ["--bench", testCase, "--save-baseline", "base"],
-      options
-    );
-    core.debug(`${testCase}: Base benchmarked`);
+    if (baseExecutable) {
+      if (!onBaseBranch) {
+        await exec.exec("git", [
+          "checkout",
+          core.getInput("branchName") || github.base_ref,
+        ]);
+        core.debug(`${testCase}: Checked out to base branch`);
+        onBaseBranch = true;
+      }
 
+      await exec.exec(
+        baseExecutable,
+        ["--bench", testCase, "--save-baseline", "base"],
+        options
+      );
+      core.debug(`${testCase}: Base benchmarked`);
+    }
+  }
+
+  if (onBaseBranch) {
     await exec.exec("git", ["checkout", "-"]);
     core.debug(`${testCase}: Checked out to changes branch`);
+    onBaseBranch = false;
   }
 
   options.listeners = {
