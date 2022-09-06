@@ -48,6 +48,7 @@ async function main() {
       "cargo",
       benchCmd.concat(["--no-run", "--message-format", "json"]),
       {
+        silent: true,
         listeners: {
           stdout: (data) => {
             output += data.toString();
@@ -72,14 +73,14 @@ async function main() {
     let output = "";
     await exec.exec(executable, ["--bench", "--list"], {
       listeners: {
-        stderr: (data) => {
+        stdout: (data) => {
           output += data.toString();
         },
       },
     });
     let cases = new Set();
     for (const line of output.split("\n")) {
-      const match = /^(.+): bench$/.exec(line);
+      const match = /^(.+): bench\r?$/.exec(line);
       if (match) {
         cases.add(match[1]);
       }
@@ -88,11 +89,11 @@ async function main() {
   }
   async function listAllCases(executables) {
     let object = {};
-    for (const { path: executable, kind } of executables) {
+    for (const { path, kind } of executables) {
       if (kind !== "bench") continue;
-      let cases = await listCases(executable);
+      let cases = await listCases(path);
       for (const testCase of cases) {
-        object[testCase] = executable;
+        object[testCase] = path;
       }
     }
     return object;
