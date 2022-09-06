@@ -1,6 +1,6 @@
 const { inspect } = require("util");
 const { basename, join } = require("path");
-const { mkdtemp, copyFile } = require("fs/promises");
+const { mkdtemp, copyFile, rm } = require("fs/promises");
 const exec = require("@actions/exec");
 const core = require("@actions/core");
 const github = require("@actions/github");
@@ -144,6 +144,9 @@ async function main() {
   await exec.exec("git", ["checkout", "-"]);
   core.debug("Checked out to changes branch");
 
+  core.debug("Clear baselines");
+  rm("target/criterion", { recursive: true, force: true });
+
   core.debug("### Benchmark starting ###");
   let onBaseBranch = false;
   for (const testCase of new Set([
@@ -162,7 +165,7 @@ async function main() {
 
       await exec.exec(
         changesExecutable,
-        ["--bench", testCase, "--save-baseline", "changes"],
+        ["--bench", testCase, "--save-baseline", "changes", "--noplot"],
         {
           ...options,
           env: {
@@ -186,7 +189,7 @@ async function main() {
 
       await exec.exec(
         baseExecutable,
-        ["--bench", testCase, "--save-baseline", "base"],
+        ["--bench", testCase, "--save-baseline", "base", "--noplot"],
         {
           ...options,
           env: {
