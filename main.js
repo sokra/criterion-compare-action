@@ -44,19 +44,27 @@ async function main() {
   core.debug("### Compiling ###");
   async function getExecutables() {
     let output = "";
-    await exec.exec("cargo", benchCmd.concat(["--no-run"]), {
-      listeners: {
-        stderr: (data) => {
-          output += data.toString();
+    await exec.exec(
+      "cargo",
+      benchCmd.concat(["--no-run", "--message-format", "json"]),
+      {
+        listeners: {
+          stdout: (data) => {
+            output += data.toString();
+          },
         },
-      },
-    });
-    let executables = new Set();
-    for (const line of output.split("\n")) {
-      const match = /Executable.+(target[\\\/]release[\\\/][^)]+)/.exec(line);
-      if (match) {
-        executables.add(match[1]);
       }
+    );
+    let executables = [];
+    for (const line of output.split("\n")) {
+      if (!line) continue;
+      const data = JSON.parse(line);
+      if (!data.target) continue;
+      const kind = data.target.kind[0];
+      if (!["bench", "bin"].includes(kind)) continue;
+      const name = data.target.name;
+      const path = data.executable;
+      executables.push({ path, kind, name });
     }
     return executables;
   }
@@ -64,7 +72,7 @@ async function main() {
     let output = "";
     await exec.exec(executable, ["--bench", "--list"], {
       listeners: {
-        stdout: (data) => {
+        stderr: (data) => {
           output += data.toString();
         },
       },
@@ -80,7 +88,8 @@ async function main() {
   }
   async function listAllCases(executables) {
     let object = {};
-    for (const executable of executables) {
+    for (const { path: executable, kind } of executables) {
+      if (kind !== "bench") continue;
       let cases = await listCases(executable);
       for (const testCase of cases) {
         object[testCase] = executable;
@@ -89,15 +98,23 @@ async function main() {
     return object;
   }
   async function moveExecutables(executables) {
-    const newExecutables = new Set();
+    const newExecutables = [];
     const dir = await mkdtemp("criterion-compare");
     for (const executable of executables) {
-      const name = basename(executable);
+      const name = basename(executable.path);
       const path = join(dir, name);
-      await copyFile(executable, path);
-      newExecutables.add(path);
+      await copyFile(executable.path, path);
+      newExecutables.push({ ...executable, path });
     }
     return newExecutables;
+  }
+  function createBinExeEnv(executables) {
+    let env = {};
+    for (const { name, path, kind } of executables) {
+      if (kind === "bench") continue;
+      env[`CARGO_BIN_EXE_${name}`] = path;
+    }
+    return env;
   }
   await exec.exec("cargo", benchCmd.concat(["--no-run"]), options);
   core.debug("Changes compiled");
@@ -105,6 +122,7 @@ async function main() {
   const changesExecutables = await getExecutables();
   const movedChangesExecutables = await moveExecutables(changesExecutables);
   const changesTestCases = await listAllCases(movedChangesExecutables);
+  const changesEnv = createBinExeEnv(movedChangesExecutables);
   core.debug("Changes listed");
 
   await exec.exec("git", [
@@ -119,6 +137,7 @@ async function main() {
   const baseExecutables = await getExecutables();
   const movedBaseExecutables = await moveExecutables(baseExecutables);
   const baseTestCases = await listAllCases(movedBaseExecutables);
+  const baseEnv = createBinExeEnv(movedBaseExecutables);
   core.debug("Base listed");
 
   await exec.exec("git", ["checkout", "-"]);
@@ -143,7 +162,13 @@ async function main() {
       await exec.exec(
         changesExecutable,
         ["--bench", testCase, "--save-baseline", "changes"],
-        options
+        {
+          ...options,
+          env: {
+            ...process.env,
+            ...changesEnv,
+          },
+        }
       );
       core.debug(`${testCase}: Changes benchmarked`);
     }
@@ -161,7 +186,13 @@ async function main() {
       await exec.exec(
         baseExecutable,
         ["--bench", testCase, "--save-baseline", "base"],
-        options
+        {
+          ...options,
+          env: {
+            ...process.env,
+            ...baseEnv,
+          },
+        }
       );
       core.debug(`${testCase}: Base benchmarked`);
     }
