@@ -65,6 +65,7 @@ async function main() {
       if (!["bench", "bin"].includes(kind)) continue;
       const name = data.target.name;
       const path = data.executable;
+      if (!path) continue;
       executables.push({ path, kind, name });
     }
     return executables;
