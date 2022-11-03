@@ -48,6 +48,7 @@ async function main() {
       "cargo",
       benchCmd.concat(["--no-run", "--message-format", "json"]),
       {
+        ...options,
         silent: true,
         listeners: {
           stdout: (data) => {
@@ -73,6 +74,7 @@ async function main() {
   async function listCases(executable) {
     let output = "";
     await exec.exec(executable, ["--bench", "--list"], {
+      ...options,
       listeners: {
         stdout: (data) => {
           output += data.toString();
@@ -218,7 +220,7 @@ async function main() {
     },
   };
 
-  await exec.exec("critcmp", ["base", "changes"], options);
+  await exec.exec("critcmp", ["base", "changes", "--list"], options);
 
   core.setOutput("stdout", myOutput);
   core.setOutput("stderr", myError);
@@ -316,97 +318,105 @@ function formatPercentage(value) {
 
 function convertToMarkdown(results) {
   /* Example results:
-    group                            base                                   changes
-    -----                            ----                                   -------
-    character module                 1.03     22.2±0.41ms        ? B/sec    1.00     21.6±0.53ms        ? B/sec
-    directory module – home dir      1.02     21.7±0.69ms        ? B/sec    1.00     21.4±0.44ms        ? B/sec
-    full prompt                      1.08     46.0±0.90ms        ? B/sec    1.00     42.7±0.79ms        ? B/sec
+    character module
+    ----------------
+    base        1.03     22.2±0.41ms        ? B/sec
+    changes     1.00     21.6±0.53ms        ? B/sec
+
+    directory module – home dir
+    ---------------------------
+    base        1.02     21.7±0.69ms        ? B/sec
+    changes     1.00     21.4±0.44ms        ? B/sec
+
+    full prompt
+    -----------
+    base        1.08     46.0±0.90ms        ? B/sec
+    changes     1.00     42.7±0.79ms        ? B/sec
   */
 
-  let resultLines = results.trimRight().split("\n");
+  let resultLines = results.trimRight().split("\n\n");
   let benchResults = resultLines
-    .slice(2) // skip headers
-    .map((row) => row.split(/\s{2,}/)) // split if 2+ spaces together
-    .map(
-      ([
-        name,
-        baseFactor,
-        baseDuration,
-        _baseBandwidth,
-        changesFactor,
-        changesDuration,
-        _changesBandwidth,
-      ]) => {
-        let baseUndefined = typeof baseDuration === "undefined";
-        let changesUndefined = typeof changesDuration === "undefined";
-
-        if (!name || (baseUndefined && changesUndefined)) {
-          return "";
+    .map((entry) => entry.split(/\n/)) // split on new line
+    .map(([name, _separator, ...entries]) => {
+      let baseFactor, baseDuration, changesFactor, changesDuration;
+      for (const entry of entries) {
+        let data = entry.split(/\s{2,}/); // split if 2+ spaces together
+        let [name] = data;
+        if (name === "base") {
+          [, baseFactor, baseDuration] = data;
+        } else if (name === "changes") {
+          [, changesFactor, changesDuration] = data;
         }
+      }
+      let baseUndefined = typeof baseDuration === "undefined";
+      let changesUndefined = typeof changesDuration === "undefined";
 
-        let difference = "N/A";
-        let significantDifference = "N/A";
-        if (!baseUndefined && !changesUndefined) {
-          changesFactor = Number(changesFactor);
-          baseFactor = Number(baseFactor);
+      if (!name || (baseUndefined && changesUndefined)) {
+        return "";
+      }
 
-          let changesDurSplit = changesDuration.split("±");
-          let changesUnits = changesDurSplit[1].slice(-2);
-          let changesDurSecs = convertDurToSeconds(
-            changesDurSplit[0],
-            changesUnits
-          );
-          let changesErrorSecs = convertDurToSeconds(
-            changesDurSplit[1].slice(0, -2),
-            changesUnits
-          );
+      let difference = "N/A";
+      let significantDifference = "N/A";
+      if (!baseUndefined && !changesUndefined) {
+        changesFactor = Number(changesFactor);
+        baseFactor = Number(baseFactor);
 
-          let baseDurSplit = baseDuration.split("±");
-          let baseUnits = baseDurSplit[1].slice(-2);
-          let baseDurSecs = convertDurToSeconds(baseDurSplit[0], baseUnits);
-          let baseErrorSecs = convertDurToSeconds(
-            baseDurSplit[1].slice(0, -2),
-            baseUnits
-          );
+        let changesDurSplit = changesDuration.split("±");
+        let changesUnits = changesDurSplit[1].slice(-2);
+        let changesDurSecs = convertDurToSeconds(
+          changesDurSplit[0],
+          changesUnits
+        );
+        let changesErrorSecs = convertDurToSeconds(
+          changesDurSplit[1].slice(0, -2),
+          changesUnits
+        );
 
-          difference = diffPercentage(changesDurSecs, baseDurSecs);
-          significantDifference = significantDiffPercentage(
+        let baseDurSplit = baseDuration.split("±");
+        let baseUnits = baseDurSplit[1].slice(-2);
+        let baseDurSecs = convertDurToSeconds(baseDurSplit[0], baseUnits);
+        let baseErrorSecs = convertDurToSeconds(
+          baseDurSplit[1].slice(0, -2),
+          baseUnits
+        );
+
+        difference = diffPercentage(changesDurSecs, baseDurSecs);
+        significantDifference = significantDiffPercentage(
+          changesDurSecs,
+          changesErrorSecs,
+          baseDurSecs,
+          baseErrorSecs
+        );
+        difference = formatPercentage(difference);
+        significantDifference = formatPercentage(significantDifference);
+        if (
+          isSignificant(
             changesDurSecs,
             changesErrorSecs,
             baseDurSecs,
             baseErrorSecs
-          );
-          difference = formatPercentage(difference);
-          significantDifference = formatPercentage(significantDifference);
-          if (
-            isSignificant(
-              changesDurSecs,
-              changesErrorSecs,
-              baseDurSecs,
-              baseErrorSecs
-            )
-          ) {
-            if (changesDurSecs < baseDurSecs) {
-              changesDuration = `**${changesDuration}**`;
-            } else if (changesDurSecs > baseDurSecs) {
-              baseDuration = `**${baseDuration}**`;
-            }
+          )
+        ) {
+          if (changesDurSecs < baseDurSecs) {
+            changesDuration = `**${changesDuration}**`;
+          } else if (changesDurSecs > baseDurSecs) {
+            baseDuration = `**${baseDuration}**`;
           }
         }
-
-        if (baseUndefined) {
-          baseDuration = "N/A";
-        }
-
-        if (changesUndefined) {
-          changesDuration = "N/A";
-        }
-
-        name = name.replace(/\|/g, "\\|");
-
-        return `| ${name} | ${baseDuration} | ${changesDuration} | ${difference} | ${significantDifference} |`;
       }
-    )
+
+      if (baseUndefined) {
+        baseDuration = "N/A";
+      }
+
+      if (changesUndefined) {
+        changesDuration = "N/A";
+      }
+
+      name = name.replace(/\|/g, "\\|");
+
+      return `| ${name} | ${baseDuration} | ${changesDuration} | ${difference} | ${significantDifference} |`;
+    })
     .join("\n");
 
   let shortSha = context.sha ? context.sha.slice(0, 7) : "unknown";
