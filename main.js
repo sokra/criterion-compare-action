@@ -103,10 +103,8 @@ async function main() {
   }
   async function moveExecutables(executables) {
     const newExecutables = [];
-    const dir = join(
-      process.cwd(),
-      "target",
-      await mkdtemp("criterion-compare")
+    const dir = await mkdtemp(
+      join(process.cwd(), "target", "criterion-compare")
     );
     for (const executable of executables) {
       const name = basename(executable.path);
