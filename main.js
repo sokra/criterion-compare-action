@@ -1,6 +1,6 @@
 const { inspect } = require("util");
 const { basename, join } = require("path");
-const { mkdtemp, copyFile, rm } = require("fs/promises");
+const { mkdtemp, copyFile, rm, readFile } = require("fs/promises");
 const exec = require("@actions/exec");
 const core = require("@actions/core");
 const github = require("@actions/github");
@@ -20,7 +20,6 @@ async function main() {
 
   const options = {};
   let myOutput = "";
-  let myError = "";
   if (inputs.cwd) {
     options.cwd = inputs.cwd;
   }
@@ -37,9 +36,6 @@ async function main() {
   if (inputs.features) {
     benchCmd = benchCmd.concat(["--features", inputs.features]);
   }
-
-  core.debug("### Install Critcmp ###");
-  await exec.exec("cargo", ["install", "critcmp"]);
 
   core.debug("### Compiling ###");
   async function getExecutables() {
@@ -154,10 +150,11 @@ async function main() {
 
   core.debug("### Benchmark starting ###");
   let onBaseBranch = false;
-  for (const testCase of new Set([
+  const allTestCases = new Set([
     ...Object.keys(changesTestCases),
     ...Object.keys(baseTestCases),
-  ])) {
+  ]);
+  for (const testCase of allTestCases) {
     const changesExecutable = changesTestCases[testCase];
     const baseExecutable = baseTestCases[testCase];
 
@@ -213,28 +210,16 @@ async function main() {
     onBaseBranch = false;
   }
 
-  options.listeners = {
-    stdout: (data) => {
-      myOutput += data.toString();
-    },
-    stderr: (data) => {
-      myError += data.toString();
-    },
-  };
+  const data = await readCriterionData(allTestCases);
 
-  await exec.exec("critcmp", ["base", "changes", "--list"], options);
-
-  core.setOutput("stdout", myOutput);
-  core.setOutput("stderr", myError);
-
-  const resultsAsMarkdown = convertToMarkdown(myOutput);
-
-  // An authenticated instance of `@octokit/rest`
-  const octokit = github.getOctokit(inputs.token);
-
-  const contextObj = { ...context.issue };
+  const resultsAsMarkdown = convertToMarkdown(data);
 
   try {
+    // An authenticated instance of `@octokit/rest`
+    const octokit = github.getOctokit(inputs.token);
+
+    const contextObj = { ...context.issue };
+
     const { data: comment } = await octokit.rest.issues.createComment({
       owner: contextObj.owner,
       repo: contextObj.repo,
@@ -252,34 +237,65 @@ async function main() {
     // If we can't post to the comment, display results here.
     // forkedRepos only have READ ONLY access on GITHUB_TOKEN
     // https://github.community/t5/GitHub-Actions/quot-Resource-not-accessible-by-integration-quot-for-adding-a/td-p/33925
-    const resultsAsObject = convertToTableObject(myOutput);
-    console.table(resultsAsObject);
+    console.log(resultsAsMarkdown);
   }
 
   core.debug("Succesfully run!");
 }
 
-function convertDurToSeconds(dur, units) {
-  let seconds;
-  switch (units) {
-    case "s":
-      seconds = dur;
-      break;
-    case "ms":
-      seconds = dur / 1000;
-      break;
-    case "µs":
-      seconds = dur / 1000000;
-      break;
-    case "ns":
-      seconds = dur / 1000000000;
-      break;
-    default:
-      seconds = dur;
-      break;
+async function readJson(path) {
+  try {
+    const data = await readFile(path);
+    return JSON.parse(data.toString("utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function getStats(data) {
+  if (!data) return null;
+  if (data.slope) {
+    return {
+      value: data.slope.point_estimate / 1000 / 1000,
+      stdErr: data.slope.standard_error / 1000 / 1000,
+    };
+  } else if (data.mean) {
+    return {
+      value: data.mean.point_estimate / 1000 / 1000,
+      stdErr: data.mean.standard_error / 1000 / 1000,
+    };
+  } else {
+    return null;
+  }
+}
+
+async function readCriterionData(testCases) {
+  const dir = join("target", "criterion");
+
+  let entries = [];
+
+  for (const testCase of testCases) {
+    const basePath = join(dir, testCase, "base", "estimates.json");
+    const changesPath = join(dir, testCase, "changes", "estimates.json");
+    const base = await readJson(basePath);
+    const changes = await readJson(changesPath);
+    const baseStats = getStats(base);
+    const changesStats = getStats(changes);
+
+    entries.push([testCase, baseStats, changesStats]);
   }
 
-  return seconds;
+  entries.sort((a, b) => {
+    if (a[0] < b[0]) {
+      return -1;
+    }
+    if (a[0] > b[0]) {
+      return 1;
+    }
+    return 0;
+  });
+
+  return entries;
 }
 
 const SIGNIFICANT_FACTOR = 2;
@@ -318,167 +334,95 @@ function formatPercentage(value) {
   return (value <= 0 ? "" : "+") + value.toFixed(2) + "%";
 }
 
-function convertToMarkdown(results) {
-  /* Example results:
-    character module
-    ----------------
-    base        1.03     22.2±0.41ms        ? B/sec
-    changes     1.00     21.6±0.53ms        ? B/sec
-
-    directory module – home dir
-    ---------------------------
-    base        1.02     21.7±0.69ms        ? B/sec
-    changes     1.00     21.4±0.44ms        ? B/sec
-
-    full prompt
-    -----------
-    base        1.08     46.0±0.90ms        ? B/sec
-    changes     1.00     42.7±0.79ms        ? B/sec
-  */
-
-  let resultLines = results.trimRight().split("\n\n");
-  let benchResults = resultLines
-    .map((entry) => entry.split(/\n/)) // split on new line
-    .map(([name, _separator, ...entries]) => {
-      let baseFactor, baseDuration, changesFactor, changesDuration;
-      for (const entry of entries) {
-        let data = entry.split(/\s{2,}/); // split if 2+ spaces together
-        let [name] = data;
-        if (name === "base") {
-          [, baseFactor, baseDuration] = data;
-        } else if (name === "changes") {
-          [, changesFactor, changesDuration] = data;
-        }
-      }
-      let baseUndefined = typeof baseDuration === "undefined";
-      let changesUndefined = typeof changesDuration === "undefined";
-
-      if (!name || (baseUndefined && changesUndefined)) {
-        return "";
-      }
-
-      let difference = "N/A";
-      let significantDifference = "N/A";
-      if (!baseUndefined && !changesUndefined) {
-        changesFactor = Number(changesFactor);
-        baseFactor = Number(baseFactor);
-
-        let changesDurSplit = changesDuration.split("±");
-        let changesUnits = changesDurSplit[1].slice(-2);
-        let changesDurSecs = convertDurToSeconds(
-          changesDurSplit[0],
-          changesUnits
-        );
-        let changesErrorSecs = convertDurToSeconds(
-          changesDurSplit[1].slice(0, -2),
-          changesUnits
-        );
-
-        let baseDurSplit = baseDuration.split("±");
-        let baseUnits = baseDurSplit[1].slice(-2);
-        let baseDurSecs = convertDurToSeconds(baseDurSplit[0], baseUnits);
-        let baseErrorSecs = convertDurToSeconds(
-          baseDurSplit[1].slice(0, -2),
-          baseUnits
-        );
-
-        difference = diffPercentage(changesDurSecs, baseDurSecs);
-        significantDifference = significantDiffPercentage(
-          changesDurSecs,
-          changesErrorSecs,
-          baseDurSecs,
-          baseErrorSecs
-        );
-        difference = formatPercentage(difference);
-        significantDifference = formatPercentage(significantDifference);
-        if (
-          isSignificant(
-            changesDurSecs,
-            changesErrorSecs,
-            baseDurSecs,
-            baseErrorSecs
-          )
-        ) {
-          if (changesDurSecs < baseDurSecs) {
-            changesDuration = `**${changesDuration}**`;
-          } else if (changesDurSecs > baseDurSecs) {
-            baseDuration = `**${baseDuration}**`;
-          }
-        }
-      }
-
-      if (baseUndefined) {
-        baseDuration = "N/A";
-      }
-
-      if (changesUndefined) {
-        changesDuration = "N/A";
-      }
-
-      name = name.replace(/\|/g, "\\|");
-
-      return `| ${name} | ${baseDuration} | ${changesDuration} | ${difference} | ${significantDifference} |`;
-    })
-    .join("\n");
-
-  let shortSha = context.sha ? context.sha.slice(0, 7) : "unknown";
-  return `## Benchmark for ${shortSha}
-  <details>
-    <summary>Click to view benchmark</summary>
-
-| Test | Base         | PR               | % | Significant % |
-|------|--------------|------------------|---|---------------|
-${benchResults}
-
-  </details>
-  `;
+function formatStats(stats) {
+  if (!stats) return "N/A";
+  const v = stats.value;
+  const e = stats.stdErr;
+  if (v > 10) {
+    return `${v.toFixed(2)}s ± ${e.toFixed(2)}s`;
+  }
+  if (v > 10 / 1000) {
+    return `${v.toFixed(2)}s ± ${e.toFixed(2)}ms`;
+  }
+  return `${v.toFixed(2)}s ± ${e.toFixed(2)}µs`;
 }
 
-function convertToTableObject(results) {
-  /* Example results:
-    group                            base                                   changes
-    -----                            ----                                   -------
-    character module                 1.03     22.2±0.41ms        ? B/sec    1.00     21.6±0.53ms        ? B/sec
-    directory module – home dir      1.02     21.7±0.69ms        ? B/sec    1.00     21.4±0.44ms        ? B/sec
-    full prompt                      1.08     46.0±0.90ms        ? B/sec    1.00     42.7±0.79ms        ? B/sec
-  */
+function convertToMarkdown(data) {
+  let significant = [];
+  let rows = [];
+  data.forEach(([name, base, changes]) => {
+    let baseUndefined = !base;
+    let changesUndefined = !changes;
 
-  let resultLines = results.split("\n");
-  let benchResults = resultLines
-    .slice(2) // skip headers
-    .map((row) => row.split(/\s{2,}/)) // split if 2+ spaces together
-    .map(
-      ([
-        name,
-        baseFactor,
-        baseDuration,
-        _baseBandwidth,
-        changesFactor,
-        changesDuration,
-        _changesBandwidth,
-      ]) => {
-        changesFactor = Number(changesFactor);
-        baseFactor = Number(baseFactor);
+    if (!name || (baseUndefined && changesUndefined)) {
+      return "";
+    }
 
-        let difference = -(1 - changesFactor / baseFactor) * 100;
-        difference =
-          (changesFactor <= baseFactor ? "" : "+") + difference.toPrecision(2);
-        if (changesFactor < baseFactor) {
-          changesDuration = `**${changesDuration}**`;
-        } else if (changesFactor > baseFactor) {
+    let baseDuration = formatStats(base);
+    let changesDuration = formatStats(changes);
+
+    let difference = "N/A";
+    let significantDifference = "N/A";
+    if (!baseUndefined && !changesUndefined) {
+      difference = diffPercentage(changes.value, base.value);
+      significantDifference = significantDiffPercentage(
+        changes.value,
+        changes.stdErr,
+        base.value,
+        base.stdErr
+      );
+      difference = formatPercentage(difference);
+      significantDifference = formatPercentage(significantDifference);
+      if (
+        isSignificant(changes.value, changes.stdErr, base.value, base.stdErr)
+      ) {
+        if (changes.value < base.value) {
           baseDuration = `**${baseDuration}**`;
+        } else if (changes.value > base.value) {
+          changesDuration = `**${changesDuration}**`;
         }
-
-        return {
-          name,
-          baseDuration,
-          changesDuration,
-          difference,
-        };
       }
-    );
+    }
 
-  return benchResults;
+    name = name.replace(/\|/g, "\\|");
+
+    const line = `| ${name} | ${baseDuration} | ${changesDuration} | ${difference} | ${significantDifference} |`;
+    if (significantDifference) {
+      significant.push(line);
+    }
+    rows.push(line);
+  });
+
+  const header = `| Test | Base         | PR               | % | Significant % |
+|------|--------------|------------------|---|--------------|`;
+
+  const shortSha = context.sha ? context.sha.slice(0, 7) : "unknown";
+  if (significant.length > 0) {
+    return `## Benchmark for ${shortSha}
+
+${header}
+${significant.join("\n")}
+  
+<details>
+  <summary>Click to view full benchmark</summary>
+  
+${header}
+${rows.join("\n")}
+  
+</details>
+`;
+  } else {
+    return `## Benchmark for ${shortSha}
+
+<details>
+  <summary>Click to view benchmark</summary>
+
+${header}
+${rows.join("\n")}
+
+</details>
+`;
+  }
 }
 
 // IIFE to be able to use async/await
