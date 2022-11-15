@@ -426,8 +426,8 @@ function convertToMarkdown(results) {
   <details>
     <summary>Click to view benchmark</summary>
 
-| Test | Base         | PR               | % | sigificant % |
-|------|--------------|------------------|---|--------------|
+| Test | Base         | PR               | % | Significant % |
+|------|--------------|------------------|---|---------------|
 ${benchResults}
 
   </details>
