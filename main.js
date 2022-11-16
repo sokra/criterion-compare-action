@@ -1,5 +1,5 @@
 const { inspect } = require("util");
-const { basename, join } = require("path");
+const { basename, join, resolve } = require("path");
 const { mkdtemp, copyFile, rm, readFile } = require("fs/promises");
 const exec = require("@actions/exec");
 const core = require("@actions/core");
@@ -19,10 +19,10 @@ async function main() {
   core.debug(`Inputs: ${inspect(inputs)}`);
 
   const options = {};
-  let myOutput = "";
   if (inputs.cwd) {
     options.cwd = inputs.cwd;
   }
+  const cwd = inputs.cwd ? resolve(process.cwd(), inputs.cwd) : process.cwd();
 
   let benchCmd = ["bench"];
   if (inputs.benchName) {
@@ -99,9 +99,7 @@ async function main() {
   }
   async function moveExecutables(executables) {
     const newExecutables = [];
-    const dir = await mkdtemp(
-      join(process.cwd(), "target", "criterion-compare")
-    );
+    const dir = await mkdtemp(join(cwd, "target", "criterion-compare"));
     for (const executable of executables) {
       const name = basename(executable.path);
       const path = join(dir, name);
@@ -146,7 +144,10 @@ async function main() {
   core.debug("Checked out to changes branch");
 
   core.debug("Clear baselines");
-  rm("target/criterion", { recursive: true, force: true });
+  rm(join(cwd, "target/criterion"), {
+    recursive: true,
+    force: true,
+  });
 
   core.debug("### Benchmark starting ###");
   let onBaseBranch = false;
@@ -210,7 +211,7 @@ async function main() {
     onBaseBranch = false;
   }
 
-  const data = await readCriterionData(allTestCases);
+  const data = await readCriterionData(cwd, allTestCases);
 
   const resultsAsMarkdown = convertToMarkdown(data);
 
@@ -269,14 +270,24 @@ function getStats(data) {
   }
 }
 
-async function readCriterionData(testCases) {
-  const dir = join("target", "criterion");
+async function readCriterionData(cwd, testCases) {
+  const dir = join(cwd, "target", "criterion");
 
   let entries = [];
 
   for (const testCase of testCases) {
-    const basePath = join(dir, testCase, "base", "estimates.json");
-    const changesPath = join(dir, testCase, "changes", "estimates.json");
+    const basePath = join(
+      dir,
+      testCase.toLowerCase(),
+      "base",
+      "estimates.json"
+    );
+    const changesPath = join(
+      dir,
+      testCase.toLowerCase(),
+      "changes",
+      "estimates.json"
+    );
     const base = await readJson(basePath);
     const changes = await readJson(changesPath);
     const baseStats = getStats(base);
