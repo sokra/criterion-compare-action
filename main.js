@@ -277,18 +277,8 @@ async function readCriterionData(cwd, testCases) {
   let entries = [];
 
   for (const testCase of testCases) {
-    const basePath = join(
-      dir,
-      testCase.toLowerCase(),
-      "base",
-      "estimates.json"
-    );
-    const changesPath = join(
-      dir,
-      testCase.toLowerCase(),
-      "changes",
-      "estimates.json"
-    );
+    const basePath = join(dir, testCase, "base", "estimates.json");
+    const changesPath = join(dir, testCase, "changes", "estimates.json");
     const base = await readJson(basePath);
     const changes = await readJson(changesPath);
     const baseStats = getStats(base);
