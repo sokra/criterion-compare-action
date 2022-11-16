@@ -1,6 +1,6 @@
 const { inspect } = require("util");
 const { basename, join, resolve } = require("path");
-const { mkdtemp, copyFile, rm, readFile } = require("fs/promises");
+const { mkdtemp, copyFile, rm, readFile, mkdir } = require("fs/promises");
 const exec = require("@actions/exec");
 const core = require("@actions/core");
 const github = require("@actions/github");
@@ -99,6 +99,7 @@ async function main() {
   }
   async function moveExecutables(executables) {
     const newExecutables = [];
+    mkdir(join(cwd, "target"), { recursive: true });
     const dir = await mkdtemp(join(cwd, "target", "criterion-compare"));
     for (const executable of executables) {
       const name = basename(executable.path);
