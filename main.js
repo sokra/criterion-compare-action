@@ -338,8 +338,8 @@ function formatPercentage(value) {
 
 function formatStats(stats) {
   if (!stats) return "N/A";
-  const v = stats.value;
-  const e = stats.stdErr;
+  let v = stats.value;
+  let e = stats.stdErr;
   if (v > 10) {
     return `${v.toFixed(2)}s ± ${e.toFixed(2)}s`;
   }
