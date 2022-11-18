@@ -258,13 +258,13 @@ function getStats(data) {
   if (!data) return null;
   if (data.slope) {
     return {
-      value: data.slope.point_estimate / 1000 / 1000,
-      stdErr: data.slope.standard_error / 1000 / 1000,
+      value: data.slope.point_estimate / 1000 / 1000 / 1000,
+      stdErr: data.slope.standard_error / 1000 / 1000 / 1000,
     };
   } else if (data.mean) {
     return {
-      value: data.mean.point_estimate / 1000 / 1000,
-      stdErr: data.mean.standard_error / 1000 / 1000,
+      value: data.mean.point_estimate / 1000 / 1000 / 1000,
+      stdErr: data.mean.standard_error / 1000 / 1000 / 1000,
     };
   } else {
     return null;
@@ -343,10 +343,14 @@ function formatStats(stats) {
   if (v > 10) {
     return `${v.toFixed(2)}s ± ${e.toFixed(2)}s`;
   }
-  if (v > 10 / 1000) {
-    return `${v.toFixed(2)}s ± ${e.toFixed(2)}ms`;
+  v *= 1000;
+  e *= 1000;
+  if (v > 10) {
+    return `${v.toFixed(2)}ms ± ${e.toFixed(2)}ms`;
   }
-  return `${v.toFixed(2)}s ± ${e.toFixed(2)}µs`;
+  v *= 1000;
+  e *= 1000;
+  return `${v.toFixed(2)}µs ± ${e.toFixed(2)}µs`;
 }
 
 function convertToMarkdown(data) {
