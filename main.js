@@ -99,7 +99,7 @@ async function main() {
   }
   async function moveExecutables(executables) {
     const newExecutables = [];
-    mkdir(join(cwd, "target"), { recursive: true });
+    await mkdir(join(cwd, "target"), { recursive: true });
     const dir = await mkdtemp(join(cwd, "target", "criterion-compare"));
     for (const executable of executables) {
       const name = basename(executable.path);
