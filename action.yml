@@ -17,6 +17,10 @@ inputs:
     description: "Compare only this benchmark"
     required: false
     default: ""
+  title:
+    description: "Alternative title for the comment"
+    required: false
+    default: "Benchmark"
   features:
     description: "A list of comma seperated features that are activated for this benchmark"
     required: false
@@ -25,6 +29,10 @@ inputs:
     description: "Enable the default features of a crate while running the benchmark, usually the default features are enabled"
     required: false
     default: true
+  quiet:
+    description: "Only post comment when there are significant changes"
+    required: false
+    default: false
 runs:
   using: "node16"
   main: "dist/index.js"

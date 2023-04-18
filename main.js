@@ -11,6 +11,8 @@ async function main() {
   const inputs = {
     token: core.getInput("token", { required: true }),
     branchName: core.getInput("branchName", { required: true }),
+    title: core.getInput("title"),
+    quiet: core.getInput("quiet"),
     cwd: core.getInput("cwd"),
     benchName: core.getInput("benchName"),
     features: core.getInput("features"),
@@ -214,32 +216,38 @@ async function main() {
 
   const data = await readCriterionData(cwd, allTestCases);
 
-  const resultsAsMarkdown = convertToMarkdown(data);
+  const {
+    significant,
+    comment: commentBody,
+    summary,
+  } = convertToMarkdown(data, inputs.title);
 
-  try {
-    // An authenticated instance of `@octokit/rest`
-    const octokit = github.getOctokit(inputs.token);
+  // Display results here in any case
+  console.log(summary);
 
-    const contextObj = { ...context.issue };
+  if (!inputs.quiet || significant) {
+    try {
+      // An authenticated instance of `@octokit/rest`
+      const octokit = github.getOctokit(inputs.token);
 
-    const { data: comment } = await octokit.rest.issues.createComment({
-      owner: contextObj.owner,
-      repo: contextObj.repo,
-      issue_number: contextObj.number,
-      body: resultsAsMarkdown,
-    });
-    core.info(
-      `Created comment id '${comment.id}' on issue '${contextObj.number}' in '${contextObj.repo}'.`
-    );
-    core.setOutput("comment-id", comment.id);
-  } catch (err) {
-    core.warning(`Failed to comment: ${err}`);
-    core.info("Commenting is not possible from forks.");
+      const contextObj = { ...context.issue };
 
-    // If we can't post to the comment, display results here.
-    // forkedRepos only have READ ONLY access on GITHUB_TOKEN
-    // https://github.community/t5/GitHub-Actions/quot-Resource-not-accessible-by-integration-quot-for-adding-a/td-p/33925
-    console.log(resultsAsMarkdown);
+      const { data: comment } = await octokit.rest.issues.createComment({
+        owner: contextObj.owner,
+        repo: contextObj.repo,
+        issue_number: contextObj.number,
+        body: commentBody,
+      });
+      core.info(
+        `Created comment id '${comment.id}' on issue '${contextObj.number}' in '${contextObj.repo}'.`
+      );
+      core.setOutput("comment-id", comment.id);
+    } catch (err) {
+      // forkedRepos only have READ ONLY access on GITHUB_TOKEN
+      // https://github.community/t5/GitHub-Actions/quot-Resource-not-accessible-by-integration-quot-for-adding-a/td-p/33925
+      core.warning(`Failed to comment: ${err}`);
+      core.info("Commenting is not possible from forks.");
+    }
   }
 
   core.debug("Succesfully run!");
@@ -353,7 +361,7 @@ function formatStats(stats) {
   return `${v.toFixed(2)}µs ± ${e.toFixed(2)}µs`;
 }
 
-function convertToMarkdown(data) {
+function convertToMarkdown(data, title) {
   let significant = [];
   let rows = [];
   data.forEach(([name, base, changes]) => {
@@ -403,8 +411,9 @@ function convertToMarkdown(data) {
 |------|--------------|------------------|---|--------------|`;
 
   const shortSha = context.sha ? context.sha.slice(0, 7) : "unknown";
+  let comment;
   if (significant.length > 0) {
-    return `## Benchmark for ${shortSha}
+    comment = `## ${title || "Benchmark"} for ${shortSha}
 
 ${header}
 ${significant.join("\n")}
@@ -418,7 +427,7 @@ ${rows.join("\n")}
 </details>
 `;
   } else {
-    return `## Benchmark for ${shortSha}
+    comment = `## ${title || "Benchmark"} for ${shortSha}
 
 <details>
   <summary>Click to view benchmark</summary>
@@ -429,6 +438,15 @@ ${rows.join("\n")}
 </details>
 `;
   }
+  const summary = `## ${title || "Benchmark"} for ${shortSha}
+  
+${header}
+${rows.join("\n")}`;
+  return {
+    significant: significant.length > 0,
+    comment,
+    summary,
+  };
 }
 
 // IIFE to be able to use async/await
