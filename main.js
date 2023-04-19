@@ -13,6 +13,7 @@ async function main() {
     branchName: core.getInput("branchName", { required: true }),
     title: core.getInput("title"),
     quiet: core.getInput("quiet"),
+    silent: core.getInput("silent"),
     cwd: core.getInput("cwd"),
     benchName: core.getInput("benchName"),
     features: core.getInput("features"),
@@ -225,7 +226,7 @@ async function main() {
   // Display results here in any case
   console.log(summary);
 
-  if (!inputs.quiet || significant) {
+  if ((!inputs.quiet || significant) && !inputs.silent) {
     try {
       // An authenticated instance of `@octokit/rest`
       const octokit = github.getOctokit(inputs.token);

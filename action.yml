@@ -33,6 +33,10 @@ inputs:
     description: "Only post comment when there are significant changes"
     required: false
     default: false
+  silent:
+    description: "Never post a comment"
+    required: false
+    default: false
 runs:
   using: "node16"
   main: "dist/index.js"
