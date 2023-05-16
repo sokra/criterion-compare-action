@@ -7,13 +7,23 @@ const github = require("@actions/github");
 
 const context = github.context;
 
+function handleBoolean(str) {
+  if (str === "true") return true;
+  if (str === "false") return false;
+  if (str === "0") return false;
+  if (str === "no") return false;
+  if (str === "off") return false;
+  if (str) return true;
+  return false;
+}
+
 async function main() {
   const inputs = {
     token: core.getInput("token", { required: true }),
     branchName: core.getInput("branchName", { required: true }),
     title: core.getInput("title"),
-    quiet: core.getInput("quiet"),
-    silent: core.getInput("silent"),
+    quiet: handleBoolean(core.getInput("quiet")),
+    silent: handleBoolean(core.getInput("silent")),
     cwd: core.getInput("cwd"),
     benchName: core.getInput("benchName"),
     features: core.getInput("features"),
